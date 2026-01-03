@@ -27,6 +27,7 @@
 var socket = io();
 var gameGroup;
 var chart;
+var aiModels = [];
 
 google.charts.load('current', { packages: ['corechart'] });
 
@@ -36,6 +37,7 @@ $(document).ready(function () {
     $('#myModal').modal('show');
     $('#btnResetGame').hide();
     $('#btnEndGame').hide();
+    $('#btnAddTeam').hide();
     $('#charts').hide();
 
     // Coming in from the dialog
@@ -48,8 +50,14 @@ $(document).ready(function () {
                 $('#myModal').modal('hide');
                 $('#groupRank').text("Group #");
                 gameGroup = msg.groups;
+                aiModels = msg.aiModels || [];
+                
+                // Populate the AI model options in the Add Team modal
+                populateAiModelOptions();
+                
                 refreshTable(gameGroup, msg.numUsers, false);
                 $('#grouppanel').show();
+                $('#btnAddTeam').show();
 
                 if (msg.status == "started") {
                     startGame(msg.numUsers);
@@ -82,6 +90,7 @@ $(document).ready(function () {
         $('#btnStartGame').show();
         $('#btnEndGame').hide();
         $('#btnResetGame').hide();
+        $('#btnAddTeam').show();
         $('#charts').hide();
 
         socket.emit('reset game', function (msg) {
@@ -92,6 +101,35 @@ $(document).ready(function () {
                 gameGroup = msg.groups;
                 $('#groupRank').text("Group #");
                 refreshTable(gameGroup, msg.numUsers, false);
+            }
+        });
+    });
+
+    // Add Team button - show modal
+    $("#btnAddTeam").click(function () {
+        $('#addTeamError').hide();
+        $('#addTeamModal').modal('show');
+    });
+
+    // Create Team button in modal
+    $("#btnCreateTeam").click(function () {
+        $('#addTeamError').hide();
+        
+        var playerTypes = [
+            $('#playerTypeRetailer').val(),
+            $('#playerTypeWholesaler').val(),
+            $('#playerTypeWarehouse').val(),
+            $('#playerTypeFactory').val()
+        ];
+        
+        socket.emit('create team', playerTypes, function (msg) {
+            if (msg.err) {
+                $('#addTeamErrorText').text(msg.err);
+                $('#addTeamError').show();
+            } else {
+                gameGroup = msg.groups;
+                refreshTable(gameGroup, msg.numUsers, false);
+                $('#addTeamModal').modal('hide');
             }
         });
     });
@@ -161,6 +199,7 @@ function startGame(numUsers) {
     $('#btnStartGame').hide();
     $('#btnEndGame').show();
     $('#btnResetGame').show();
+    $('#btnAddTeam').hide();
     if (numUsers == 1) {
         var numParticipants = "1 participant.";
     } else {
@@ -214,11 +253,25 @@ function refreshTable(groups, numUsers, gameStarted) {
         var userDisconnected = false;
         for (var j = 0; j < 4; j++) {
             if (groups[i].users[j]) {
-                if (groups[i].users[j].socketId) {
-                    var userCell = '<td>' + groups[i].users[j].name + '</td>';
-                } else {
+                var user = groups[i].users[j];
+                var playerTypeLabel = '';
+                
+                // Determine player type label
+                if (user.playerType && user.playerType !== 'human') {
+                    playerTypeLabel = ' (' + user.playerType + ')';
+                } else if (user.playerType === 'human' && !user.name) {
+                    playerTypeLabel = ' (Empty)';
+                }
+                
+                if (user.socketId && user.socketId !== 'AI') {
+                    var userCell = '<td>' + user.name + playerTypeLabel + '</td>';
+                } else if (user.socketId === 'AI') {
+                    var userCell = '<td>' + user.name + '</td>';
+                } else if (user.name) {
                     userDisconnected = true;
-                    var userCell = '<td>' + groups[i].users[j].name + ' (Disconnected)</td>';
+                    var userCell = '<td>' + user.name + playerTypeLabel + ' (Disconnected)</td>';
+                } else {
+                    var userCell = '<td>' + playerTypeLabel + '</td>';
                 }
             } else {
                 var userCell = '<td></td>';
@@ -313,4 +366,22 @@ function drawChart(group, type) {
     };
 
     chart.draw(data, options);
+}
+
+// Populate the AI model options in the Add Team modal
+function populateAiModelOptions() {
+    var selects = ['#playerTypeRetailer', '#playerTypeWholesaler', '#playerTypeWarehouse', '#playerTypeFactory'];
+    
+    for (var i = 0; i < selects.length; i++) {
+        var $select = $(selects[i]);
+        // Clear existing options
+        $select.empty();
+        $select.append($("<option></option>").attr("value", "human").text("Human"));
+        
+        // Add AI model options
+        for (var j = 0; j < aiModels.length; j++) {
+            var modelName = aiModels[j];
+            $select.append($("<option></option>").attr("value", modelName).text(modelName));
+        }
+    }
 }

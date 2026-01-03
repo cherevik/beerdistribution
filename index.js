@@ -24,10 +24,25 @@
  * THE SOFTWARE.
  * ======================================================================== */
 
+// Load environment variables from .env file
+require('dotenv').config();
+
 var express = require('express');
 var app = express();
 var http = require('http').Server(app);
 var io = require('socket.io')(http);
+var OpenAI = require('openai');
+
+// Initialize OpenAI client
+var openai = null;
+if (process.env.OPENAI_API_KEY) {
+    openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY
+    });
+    console.log('OpenAI client initialized for AI players');
+} else {
+    console.log('Warning: OPENAI_API_KEY not set. AI players will use fallback ordering logic.');
+}
 
 var groups = [];
 var users = {};
@@ -37,11 +52,22 @@ var numUsers = 0;
 var gameStarted = false;
 var gameEnded = false;
 
+// Configuration: Available AI models
+var AI_MODELS = ['gpt-5-mini', 'gpt-5.2'];
+
+// AI configuration
+var aiThinkingDelay = 1500; // Simulate thinking time
+var maxRetries = 3; // Maximum retry attempts for 429 errors
+
 var inventory_cost = 0.5;
 var backlog_cost = 1;
 var starting_inventory = 12;
 var starting_throughput = 4;
 var customer_demand = [4, 8, 12, 16, 20];
+
+// Maximum number of weeks to demonstrate the bullwhip effect
+// 40 weeks captures: initial stability (8 weeks), demand changes (weeks 8-39), and adaptation
+var MAX_WEEKS = 40;
 
 // This controls how the roles are labeled
 var BEER_NAMES = ["Retailer", "Wholesaler", "Regional Warehouse", "Factory"];
@@ -179,10 +205,64 @@ io.on('connection', function (socket) {
                 gameStatus = "waiting";
             }
 
-            callback({ status: gameStatus, numUsers: numUsers, groups: groups });
+            callback({ status: gameStatus, numUsers: numUsers, groups: groups, aiModels: AI_MODELS });
         } else {
             callback("Invalid Password");
         }
+    });
+
+    // Admin creates a team with specified player types
+    socket.on('create team', function (playerTypes, callback) {
+        if (gameStarted || gameEnded) {
+            return callback({ err: "Cannot create teams after game has started." });
+        }
+
+        if (!playerTypes || playerTypes.length !== 4) {
+            return callback({ err: "Must specify player type for all 4 roles." });
+        }
+
+        // Create new team with specified player types
+        var newGroup = { week: 0, cost: 0, users: [] };
+        
+        // Get fresh roles for this team
+        var teamRoles = JSON.parse(JSON.stringify(BEER_ROLES));
+        
+        for (var i = 0; i < 4; i++) {
+            var playerType = playerTypes[i];
+            var role = teamRoles[i];
+            
+            if (playerType === 'human') {
+                // Create empty slot for human player
+                var user = {
+                    "name": null,
+                    "socketId": null,
+                    "cost": 0,
+                    "inventory": starting_inventory,
+                    "backlog": 0,
+                    "role": role,
+                    "playerType": "human"
+                };
+                newGroup.users.push(user);
+            } else {
+                // Create AI player slot (playerType is the model name like 'gpt-4o', 'o1', etc.)
+                var aiName = "AI-" + playerType + "-" + role.name;
+                var user = {
+                    "name": aiName,
+                    "socketId": "AI",
+                    "cost": 0,
+                    "inventory": starting_inventory,
+                    "backlog": 0,
+                    "role": role,
+                    "playerType": playerType
+                };
+                newGroup.users.push(user);
+            }
+        }
+        
+        groups.push(newGroup);
+        
+        callback({ numUsers: numUsers, groups: groups });
+        io.to("admins").emit('update table', { numUsers: numUsers, groups: groups });
     });
 
     // Acknowledge the change group
@@ -236,10 +316,22 @@ io.on('connection', function (socket) {
         if (gameStarted) {
             return callback({ err: "The game has already begun." });
         } else {
-            if (numUsers == 0) {
-                return callback({ err: "You need at least 4 people to play the game." });
-            } else if (numUsers % 4 != 0) {
-                return callback({ err: "You need to fill each group before you can start the game." });
+            if (groups.length == 0) {
+                return callback({ err: "You need at least one team to play the game." });
+            }
+            
+            // Check if all teams have 4 players (human or AI)
+            for (var i = 0; i < groups.length; i++) {
+                if (groups[i].users.length < 4) {
+                    return callback({ err: "All teams must have 4 players before you can start the game." });
+                }
+                // Check if all human slots are filled
+                for (var j = 0; j < groups[i].users.length; j++) {
+                    var user = groups[i].users[j];
+                    if (user.playerType === 'human' && (!user.name || !user.socketId)) {
+                        return callback({ err: "All human player slots must be filled before you can start the game." });
+                    }
+                }
             }
 
             gameStarted = true;
@@ -290,6 +382,11 @@ io.on('connection', function (socket) {
     socket.on('submit order', function (order, callback) {
         var user = users[socket.name];
         var group = groups[user.group];
+
+        // Prevent orders if game ended or max weeks reached
+        if (gameEnded || group.week >= MAX_WEEKS) {
+            return callback({ err: "Game has ended" });
+        }
 
         console.log("User: " + socket.name);
         console.log("Group: " + user.group);
@@ -439,6 +536,28 @@ function advanceTurn(group) {
     groupToAdvance.week++;
     groupToAdvance.waitingForOrders = JSON.parse(JSON.stringify(BEER_NAMES));
 
+    // Check if this group has reached max weeks
+    if (groupToAdvance.week >= MAX_WEEKS) {
+        console.log("[Game] Group " + group + " has completed " + MAX_WEEKS + " weeks");
+        
+        // Check if all groups have reached max weeks
+        var allGroupsComplete = true;
+        for (var g = 0; g < groups.length; g++) {
+            if (groups[g].week < MAX_WEEKS) {
+                allGroupsComplete = false;
+                break;
+            }
+        }
+        
+        // If all groups are done, end the game
+        if (allGroupsComplete && !gameEnded) {
+            gameEnded = true;
+            console.log("[Game] All groups completed " + MAX_WEEKS + " weeks. Game ended automatically.");
+            io.emit('game ended', { numUsers: numUsers });
+            io.to("admins").emit('update table', { numUsers: numUsers, groups: groups });
+        }
+    }
+
     // Message to each user
     for (var i = 0; i < groupToAdvance.users.length; i++) {
         // Time to let the person know
@@ -450,6 +569,11 @@ function advanceTurn(group) {
     }
 
     io.to("admins").emit('update group', { groupNum: group, groupData: groupToAdvance, numUsers: numUsers });
+    
+    // Process AI player orders automatically (only if game hasn't ended)
+    if (!gameEnded && groupToAdvance.week < MAX_WEEKS) {
+        processAiOrders(group);
+    }
 }
 
 // Reset the game
@@ -484,6 +608,24 @@ function registerUser(socketId, userName) {
 
     if (gameStarted) return null;
 
+    // Try to find an empty human slot in existing teams first
+    for (var i = 0; i < groups.length; i++) {
+        for (var j = 0; j < groups[i].users.length; j++) {
+            var slot = groups[i].users[j];
+            // Check if this is an empty human slot (playerType === 'human' and no socketId)
+            if (slot.playerType === 'human' && !slot.socketId && !slot.name) {
+                // Assign this user to the empty slot (role is already set from team creation)
+                slot.name = userName;
+                slot.socketId = socketId;
+                
+                var userLookup = { "name": userName, "socketId": socketId, "group": i, "index": j };
+                users[userName] = userLookup;
+                return userLookup;
+            }
+        }
+    }
+
+    // No empty human slots found, create a new human-only team (original behavior)
     // Okay, get them a role
     if (roles.length == 0) roles = JSON.parse(JSON.stringify(BEER_ROLES));
     var userRole = roles.shift();
@@ -492,7 +634,7 @@ function registerUser(socketId, userName) {
     if (groups.length == 0) groups.push({ week: 0, cost: 0, users: [] });
     var lastGroup = groups[groups.length - 1];
 
-    var user = { "name": userName, "socketId": socketId, "cost": 0, "inventory": starting_inventory, "backlog": 0, "role": userRole };
+    var user = { "name": userName, "socketId": socketId, "cost": 0, "inventory": starting_inventory, "backlog": 0, "role": userRole, "playerType": "human" };
     if (lastGroup.users.length < 4) {
         lastGroup.users.push(user);
     } else {
@@ -506,4 +648,214 @@ function registerUser(socketId, userName) {
     console.log(user);
     users[userName] = userLookup;
     return userLookup;
+}
+
+// Process AI player orders for a group
+async function processAiOrders(groupIndex) {
+    var group = groups[groupIndex];
+    
+    // Prevent processing if game ended
+    if (gameEnded) return;
+    
+    var aiPlayers = [];
+    
+    // Find all AI players in this group
+    for (var i = 0; i < group.users.length; i++) {
+        var user = group.users[i];
+        if (user.playerType && user.playerType !== 'human') {
+            aiPlayers.push({ user: user, index: i });
+        }
+    }
+    
+    // If no AI players, nothing to do
+    if (aiPlayers.length === 0) return;
+    
+    // Process each AI player with delays
+    for (var i = 0; i < aiPlayers.length; i++) {
+        var aiPlayer = aiPlayers[i];
+        
+        // Add staggered delays to avoid overwhelming the API
+        await sleep(aiThinkingDelay + (i * 500));
+        
+        try {
+            var orderDecision = await getAiOrderDecision(aiPlayer.user, group);
+            
+            // Submit the order
+            aiPlayer.user.role.upstream.orders = orderDecision;
+            console.log("[AI] " + aiPlayer.user.name + " ordered: " + orderDecision);
+            
+            // Remove from waiting list
+            var search_term = aiPlayer.user.role.name;
+            var idx = group.waitingForOrders.indexOf(search_term);
+            if (idx !== -1) {
+                group.waitingForOrders.splice(idx, 1);
+            }
+            
+            // Notify clients about the order
+            io.to(groupIndex).emit('update order wait', group.waitingForOrders);
+            
+        } catch (error) {
+            console.error("[AI Error] Failed to get decision for " + aiPlayer.user.name + ":", error);
+            // Default fallback order
+            var fallbackOrder = aiPlayer.user.role.downstream.orders || starting_throughput;
+            aiPlayer.user.role.upstream.orders = fallbackOrder;
+            
+            var search_term = aiPlayer.user.role.name;
+            var idx = group.waitingForOrders.indexOf(search_term);
+            if (idx !== -1) {
+                group.waitingForOrders.splice(idx, 1);
+            }
+        }
+    }
+    
+    // After all AI orders are in, check if we can advance
+    if (group.waitingForOrders.length == 0) {
+        advanceTurn(groupIndex);
+    } else {
+        io.to(groupIndex).emit('update order wait', group.waitingForOrders);
+    }
+}
+
+// Get AI decision for ordering
+async function getAiOrderDecision(user, group) {
+    // If OpenAI client not initialized, use fallback logic
+    if (!openai) {
+        console.log("[AI Fallback] Using simple ordering logic for " + user.name);
+        return user.role.downstream.orders || starting_throughput;
+    }
+    
+    var modelName = user.playerType;
+    
+    // Build the prompt
+    var prompt = buildPrompt(user, group);
+    
+    console.log("[AI] Requesting decision from " + modelName + " for " + user.role.name);
+    
+    // Format messages for chat completion
+    let messages = [];
+    messages.push({
+        role: "system",
+        content: "You are a supply chain manager making ordering decisions. Respond with ONLY a single integer number representing the quantity to order."
+    });
+    messages.push({
+        role: "user",
+        content: prompt
+    });
+    
+    // Retry loop for handling 429 errors
+    var retryCount = 0;
+    while (retryCount < maxRetries) {
+        try {
+            // Call OpenAI API
+            var apiParams = {
+                model: modelName,
+                messages: messages
+            };
+            
+            var response = await openai.chat.completions.create(apiParams);
+            console.log("[AI] Response received from AI:" + JSON.stringify(response));
+            
+            var decision = response.choices[0].message.content.trim();
+            console.log("[AI] Raw response: " + decision);
+            
+            // Try to extract a number from the response
+            var match = decision.match(/\d+/);
+            var orderQuantity = match ? parseInt(match[0]) : NaN;
+            
+            // Validate and constrain the order
+            if (isNaN(orderQuantity) || orderQuantity < 0) {
+                console.log("[AI] Invalid response, using fallback. Response was: " + decision);
+                orderQuantity = user.role.downstream.orders || starting_throughput;
+            }
+            
+            // Cap at reasonable maximum
+            orderQuantity = Math.min(orderQuantity, 100);
+            
+            return orderQuantity;
+            
+        } catch (error) {
+            // Check if this is a rate limit error (429)
+            if (error.status === 429) {
+                retryCount++;
+                
+                // Extract retry-after from headers or use default
+                var retryAfter = 5; // Default 5 seconds
+                if (error.headers && error.headers['retry-after']) {
+                    retryAfter = parseInt(error.headers['retry-after']);
+                } else if (error.error && error.error.message) {
+                    // Try to extract from error message
+                    var match = error.error.message.match(/retry after (\d+) second/);
+                    if (match) {
+                        retryAfter = parseInt(match[1]);
+                    }
+                }
+                
+                console.log("[AI] Rate limit hit (429) for " + modelName + ", retry " + retryCount + "/" + maxRetries + " after " + retryAfter + " seconds");
+                
+                if (retryCount < maxRetries) {
+                    await sleep(retryAfter * 1000);
+                    continue; // Retry
+                } else {
+                    console.log("[AI] Max retries reached, using fallback");
+                    return user.role.downstream.orders || starting_throughput;
+                }
+            } else {
+                // Other errors, use fallback immediately
+                console.error("[AI Error] Failed to get decision for " + user.name + ":", error.message || error);
+                return user.role.downstream.orders || starting_throughput;
+            }
+        }
+    }
+    
+    // If we somehow exit the loop, use fallback
+    return user.role.downstream.orders || starting_throughput;
+}
+
+// Build prompt for AI decision
+function buildPrompt(user, group) {
+    var role = user.role;
+    var week = group.week;
+    
+    var prompt = `You are a ${role.name} in a supply chain network. Your position is between ${role.downstream.name} (your customer) and ${role.upstream.name} (your supplier).
+
+OBJECTIVE: Minimize costs while meeting customer demand.
+
+COST STRUCTURE:
+- Holding inventory costs $${inventory_cost} per unit per week
+- Unmet demand (backlog) costs $${backlog_cost} per unit per week
+
+CURRENT STATE (Week ${week}):
+- Current inventory: ${user.inventory} units
+- Current backlog: ${user.backlog} units
+- Incoming shipment from ${role.upstream.name}: ${role.upstream.shipments} units (arrives in 2 weeks)
+- Customer demand from ${role.downstream.name}: ${role.downstream.orders} units
+- Total cost so far: $${user.cost.toFixed(2)}
+
+`;
+    
+    // Add history if available
+    if (user.inventoryHistory && user.inventoryHistory.length > 0) {
+        prompt += `RECENT HISTORY (last ${Math.min(5, user.inventoryHistory.length)} weeks):\n`;
+        var historyLength = Math.min(5, user.inventoryHistory.length);
+        for (var i = Math.max(0, user.inventoryHistory.length - historyLength); i < user.inventoryHistory.length; i++) {
+            prompt += `Week ${i}: Inventory=${user.inventoryHistory[i]}, Backlog=${user.backlogHistory[i]}, Order Placed=${user.orderHistory[i] || 'N/A'}\n`;
+        }
+    }
+    
+    prompt += `\nDECISION REQUIRED:
+How many units should you order from ${role.upstream.name}?
+
+IMPORTANT NOTES:
+- Orders take 2 weeks to arrive
+- You must balance inventory costs against stockout costs
+- Consider demand trends and lead time
+
+Respond with ONLY the number of units to order (e.g., "8" or "12").`;
+    
+    return prompt;
+}
+
+// Sleep utility function
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }

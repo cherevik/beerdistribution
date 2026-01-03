@@ -5,6 +5,22 @@ This project uses [Node.js](https://nodejs.org/en/) + [Socket.io](https://socket
 ### Installation ###
 All the game requires is a Node server to run (i.e., you can just upload to a Heroku instance and be on your way) as it doesn't persist any data outside of memory. Dependencies can be installed using `npm install` and the server can be run using `node index.js`.
 
+### AI Players (Optional) ###
+The simulator now supports AI-powered players using OpenAI's API. To enable AI players:
+
+1. Set the `OPENAI_API_KEY` environment variable with your OpenAI API key
+2. Configure available models in the `AI_MODELS` array in `index.js`
+3. In the admin panel, use the "Add Team" button to create teams with AI players
+4. Select "Human" or an AI model for each of the 4 roles
+
+AI players will automatically:
+- Accept inbound shipments
+- Fulfill orders from downstream
+- Use the OpenAI API to decide how much to order from upstream suppliers
+- Consider inventory costs, backlog costs, demand trends, and supply chain dynamics
+
+**Note:** Running without `OPENAI_API_KEY` is supported - AI players will use simple fallback logic.
+
 ### Overview ###
 The source code is pretty simple. The server is wholly contained in `index.js` and the client is in `/public`, split into the user side (`client.js` and `index.html`) and admin side (`admin.html` and `admin.js`). There's a couple of font styles contained in `style.css`.
 
@@ -14,9 +30,11 @@ This code uses the excellent [animate.css](http://daneden.me/animate), [CountUp.
 ### Setup ###
 Once the server is running, users can connect using a desktop or mobile browser. They must create a unique username at which point they are assigned to a group. To prevent collusion that could ruin the simulation, users don't see who else is in their group until the end.
 
-The game requires at least one group of 4 players, but can theoretically support an unlimited number of groups. All groups need to be filled with 4 players for the game to start. If a user drops out, their seat is saved and they can relogin with the same username to get back to their group.
+The game requires at least one group of 4 players, but can theoretically support an unlimited number of groups. Human players are automatically assigned to empty human slots in teams, or a new all-human team is created if no slots are available.
 
-An administrator can login using the `admin.html` page with the password `admin`. From there, they can control the game, manage groups, and.
+The administrator can create teams with mixed human and AI players using the "Add Team" button in the admin panel. AI players will automatically make ordering decisions throughout the game.
+
+An administrator can login using the `admin.html` page with the password `admin`. From there, they can control the game, add teams with AI players, manage groups, and view analytics.
 
 ### Gameplay ###
 The game is turn-based, with every turn representing a "week" of gameplay. A turn consists of users receiving orders, fulfilling orders, and then submitting an order request up the chain. Each group can advance from week to week independently, but a group must wait until all members have submitted a new order before auto-advancing to the next week. A typical game should run around 30-40 weeks but the game has no set limit.
