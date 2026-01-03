@@ -38,6 +38,7 @@ var io = require('socket.io')(http, {
 });
 var OpenAI = require('openai');
 var Anthropic = require('@anthropic-ai/sdk');
+var { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // Initialize OpenAI client
 var openai = null;
@@ -61,6 +62,15 @@ if (process.env.ANTHROPIC_API_KEY) {
     console.log('Warning: ANTHROPIC_API_KEY not set.');
 }
 
+// Initialize Gemini client
+var gemini = null;
+if (process.env.GEMINI_API_KEY) {
+    gemini = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    console.log('Gemini client initialized for AI players');
+} else {
+    console.log('Warning: GEMINI_API_KEY not set.');
+}
+
 var groups = [];
 var users = {};
 var roles = [];
@@ -70,7 +80,7 @@ var gameStarted = false;
 var gameEnded = false;
 
 // Configuration: Available AI models
-var AI_MODELS = ['gpt-5-mini', 'gpt-5.2', 'claude-sonnet-4-5', 'claude-opus-4-5'];
+var AI_MODELS = ['gpt-5-mini', 'gpt-5.2', 'claude-sonnet-4-5', 'claude-opus-4-5', 'gemini-3-flash-preview', 'gemini-3-pro-preview'];
 
 // AI configuration
 var aiThinkingDelay = 1500; // Simulate thinking time
@@ -753,6 +763,7 @@ async function getAiOrderDecision(user, group) {
     // Determine which API to use based on model name
     var isClaudeModel = modelName.startsWith('claude');
     var isOpenAIModel = modelName.startsWith('gpt') || modelName.startsWith('o1');
+    var isGeminiModel = modelName.startsWith('gemini');
     
     // Check if appropriate client is initialized
     if (isClaudeModel && !claude) {
@@ -763,106 +774,26 @@ async function getAiOrderDecision(user, group) {
         console.log("[AI Fallback] OpenAI API not available for " + user.name);
         return user.role.downstream.orders || starting_throughput;
     }
+    if (isGeminiModel && !gemini) {
+        console.log("[AI Fallback] Gemini API not available for " + user.name);
+        return user.role.downstream.orders || starting_throughput;
+    }
     
     // Route to appropriate API
     if (isClaudeModel) {
         return await getClaudeDecision(user, group, modelName);
     } else if (isOpenAIModel) {
         return await getOpenAIDecision(user, group, modelName);
+    } else if (isGeminiModel) {
+        return await getGeminiDecision(user, group, modelName);
     } else {
         console.log("[AI Fallback] Unknown model type for " + user.name);
         return user.role.downstream.orders || starting_throughput;
     }
 }
 
-// Get decision from OpenAI
-async function getOpenAIDecision(user, group, modelName) {
-    
-    // Build the prompt
-    var prompt = buildPrompt(user, group);
-    
-    console.log("[AI] Requesting decision from " + modelName + " for " + user.role.name);
-    
-    // Format messages for chat completion
-    let messages = [];
-    messages.push({
-        role: "system",
-        content: "You are a supply chain manager making ordering decisions. Respond with ONLY a single integer number representing the quantity to order."
-    });
-    messages.push({
-        role: "user",
-        content: prompt
-    });
-    
-    // Retry loop for handling 429 errors
-    var retryCount = 0;
-    while (retryCount < maxRetries) {
-        try {
-            // Call OpenAI API
-            var apiParams = {
-                model: modelName,
-                messages: messages,
-                reasoning_effort: 'medium'
-            };
-            
-            var response = await openai.chat.completions.create(apiParams);
-            var decision = response.choices[0].message.content.trim();
-            
-            // Try to extract a number from the response
-            var match = decision.match(/\d+/);
-            var orderQuantity = match ? parseInt(match[0]) : NaN;
-            
-            // Validate and constrain the order
-            if (isNaN(orderQuantity) || orderQuantity < 0) {
-                console.log("[AI] Invalid response, using fallback. Response was: " + decision);
-                orderQuantity = user.role.downstream.orders || starting_throughput;
-            }
-
-            // Cap at reasonable maximum
-            orderQuantity = Math.min(orderQuantity, 100);
-            
-            return orderQuantity;
-            
-        } catch (error) {
-            // Check if this is a rate limit error (429)
-            if (error.status === 429) {
-                retryCount++;
-                
-                // Extract retry-after from headers or use default
-                var retryAfter = 5; // Default 5 seconds
-                if (error.headers && error.headers['retry-after']) {
-                    retryAfter = parseInt(error.headers['retry-after']);
-                } else if (error.error && error.error.message) {
-                    // Try to extract from error message
-                    var match = error.error.message.match(/retry after (\d+) second/);
-                    if (match) {
-                        retryAfter = parseInt(match[1]);
-                    }
-                }
-                
-                console.log("[AI] Rate limit hit (429) for " + modelName + ", retry " + retryCount + "/" + maxRetries + " after " + retryAfter + " seconds");
-                
-                if (retryCount < maxRetries) {
-                    await sleep(retryAfter * 1000);
-                    continue; // Retry
-                } else {
-                    console.log("[AI] Max retries reached, using fallback");
-                    return user.role.downstream.orders || starting_throughput;
-                }
-            } else {
-                // Other errors, use fallback immediately
-                console.error("[AI Error] Failed to get decision for " + user.name + ":", error.message || error);
-                return user.role.downstream.orders || starting_throughput;
-            }
-        }
-    }
-    
-    // If we somehow exit the loop, use fallback
-    return user.role.downstream.orders || starting_throughput;
-}
-
-// Get decision from Claude
-async function getClaudeDecision(user, group, modelName) {
+// Common function to handle AI decision with retry logic
+async function getAiDecisionWithRetry(user, group, modelName, apiCaller) {
     var prompt = buildPrompt(user, group);
     
     console.log("[AI] Requesting decision from " + modelName + " for " + user.role.name);
@@ -871,19 +802,8 @@ async function getClaudeDecision(user, group, modelName) {
     var retryCount = 0;
     while (retryCount < maxRetries) {
         try {
-            var response = await claude.messages.create({
-                model: modelName,
-                max_tokens: 100,
-                messages: [
-                    {
-                        role: "user",
-                        content: "You are a supply chain manager making ordering decisions. " + prompt + "\n\nRespond with ONLY a single integer number (no explanation)."
-                    }
-                ]
-            });
-            
-            var decision = response.content[0].text.trim();
-            console.log("[AI] Raw response from Claude: " + decision);
+            // Call the provider-specific API
+            var decision = await apiCaller(modelName, prompt);
             
             // Try to extract a number from the response
             var match = decision.match(/\d+/);
@@ -895,20 +815,26 @@ async function getClaudeDecision(user, group, modelName) {
                 orderQuantity = user.role.downstream.orders || starting_throughput;
             }
             
-            // Cap at reasonable maximum
-            orderQuantity = Math.min(orderQuantity, 100);
-            
             return orderQuantity;
             
         } catch (error) {
             // Check if this is a rate limit error (429)
-            if (error.status === 429) {
+            var is429 = error.status === 429 || (error.message && error.message.includes('429'));
+            
+            if (is429) {
                 retryCount++;
                 
                 // Extract retry-after from headers or use default
                 var retryAfter = 5;
-                if (error.response && error.response.headers && error.response.headers['retry-after']) {
+                if (error.headers && error.headers['retry-after']) {
+                    retryAfter = parseInt(error.headers['retry-after']);
+                } else if (error.response && error.response.headers && error.response.headers['retry-after']) {
                     retryAfter = parseInt(error.response.headers['retry-after']);
+                } else if (error.error && error.error.message) {
+                    var match = error.error.message.match(/retry after (\d+) second/);
+                    if (match) {
+                        retryAfter = parseInt(match[1]);
+                    }
                 }
                 
                 console.log("[AI] Rate limit hit (429) for " + modelName + ", retry " + retryCount + "/" + maxRetries + " after " + retryAfter + " seconds");
@@ -928,6 +854,66 @@ async function getClaudeDecision(user, group, modelName) {
     }
     
     return user.role.downstream.orders || starting_throughput;
+}
+
+// Provider-specific API callers
+async function callOpenAI(modelName, prompt) {
+    var messages = [
+        {
+            role: "system",
+            content: "You are a supply chain manager making ordering decisions. Respond with ONLY a single integer number representing the quantity to order."
+        },
+        {
+            role: "user",
+            content: prompt
+        }
+    ];
+    
+    var response = await openai.chat.completions.create({
+        model: modelName,
+        messages: messages,
+        reasoning_effort: 'medium'
+    });
+    
+    return response.choices[0].message.content.trim();
+}
+
+async function callClaude(modelName, prompt) {
+    var response = await claude.messages.create({
+        model: modelName,
+        max_tokens: 100,
+        messages: [
+            {
+                role: "user",
+                content: "You are a supply chain manager making ordering decisions. " + prompt + "\n\nRespond with ONLY a single integer number (no explanation)."
+            }
+        ]
+    });
+    
+    return response.content[0].text.trim();
+}
+
+async function callGemini(modelName, prompt) {
+    var model = gemini.getGenerativeModel({ model: modelName });
+    var result = await model.generateContent(
+        "You are a supply chain manager making ordering decisions. " + prompt + "\n\nRespond with ONLY a single integer number (no explanation)."
+    );
+    
+    var response = await result.response;
+    return response.text().trim();
+}
+
+// Wrapper functions for each provider
+async function getOpenAIDecision(user, group, modelName) {
+    return await getAiDecisionWithRetry(user, group, modelName, callOpenAI);
+}
+
+async function getClaudeDecision(user, group, modelName) {
+    return await getAiDecisionWithRetry(user, group, modelName, callClaude);
+}
+
+async function getGeminiDecision(user, group, modelName) {
+    return await getAiDecisionWithRetry(user, group, modelName, callGemini);
 }
 
 // Build prompt for AI decision

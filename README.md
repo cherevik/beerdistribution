@@ -6,12 +6,12 @@ This project uses [Node.js](https://nodejs.org/en/) + [Socket.io](https://socket
 All the game requires is a Node server to run (i.e., you can just upload to a Heroku instance and be on your way) as it doesn't persist any data outside of memory. Dependencies can be installed using `npm install` and the server can be run using `node index.js`.
 
 ### AI Players (Optional) ###
-The simulator now supports AI-powered players using OpenAI and Anthropic Claude APIs. To enable AI players:
+The simulator now supports AI-powered players using OpenAI, Anthropic Claude, and Google Gemini APIs. To enable AI players:
 
-1. Set the `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` environment variable(s) in a `.env` file
+1. Set the `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and/or `GOOGLE_API_KEY` environment variable(s) in a `.env` file
 2. Configure available models in the `AI_MODELS` array in `index.js`
 3. In the admin panel, use the "Add Team" button to create teams with AI players
-4. Select "Human" or an AI model (GPT or Claude) for each of the 4 roles
+4. Select "Human" or an AI model (GPT, Claude, or Gemini) for each of the 4 roles
 
 AI players will automatically:
 - Accept inbound shipments
@@ -22,6 +22,7 @@ AI players will automatically:
 **API Support:**
 - OpenAI models (prefix `gpt-*` or `o1-*`): gpt-4o-mini, gpt-4o
 - Claude models (prefix `claude-*`): claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022
+- Gemini models (prefix `gemini-*`): gemini-2.0-flash-exp, gemini-1.5-pro
 
 **Note:** Running without API keys is supported - AI players will use simple fallback logic.
 
