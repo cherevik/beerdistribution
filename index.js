@@ -37,6 +37,7 @@ var io = require('socket.io')(http, {
     }
 });
 var OpenAI = require('openai');
+var Anthropic = require('@anthropic-ai/sdk');
 
 // Initialize OpenAI client
 var openai = null;
@@ -46,7 +47,18 @@ if (process.env.OPENAI_API_KEY) {
     });
     console.log('OpenAI client initialized for AI players');
 } else {
-    console.log('Warning: OPENAI_API_KEY not set. AI players will use fallback ordering logic.');
+    console.log('Warning: OPENAI_API_KEY not set.');
+}
+
+// Initialize Claude client
+var claude = null;
+if (process.env.ANTHROPIC_API_KEY) {
+    claude = new Anthropic({
+        apiKey: process.env.ANTHROPIC_API_KEY
+    });
+    console.log('Claude client initialized for AI players');
+} else {
+    console.log('Warning: ANTHROPIC_API_KEY not set.');
 }
 
 var groups = [];
@@ -58,7 +70,7 @@ var gameStarted = false;
 var gameEnded = false;
 
 // Configuration: Available AI models
-var AI_MODELS = ['gpt-5-mini', 'gpt-5.2'];
+var AI_MODELS = ['gpt-5-mini', 'gpt-5.2', 'claude-sonnet-4-5', 'claude-opus-4-5'];
 
 // AI configuration
 var aiThinkingDelay = 1500; // Simulate thinking time
@@ -736,13 +748,35 @@ async function processAiOrders(groupIndex) {
 
 // Get AI decision for ordering
 async function getAiOrderDecision(user, group) {
-    // If OpenAI client not initialized, use fallback logic
-    if (!openai) {
-        console.log("[AI Fallback] Using simple ordering logic for " + user.name);
+    var modelName = user.playerType;
+    
+    // Determine which API to use based on model name
+    var isClaudeModel = modelName.startsWith('claude');
+    var isOpenAIModel = modelName.startsWith('gpt') || modelName.startsWith('o1');
+    
+    // Check if appropriate client is initialized
+    if (isClaudeModel && !claude) {
+        console.log("[AI Fallback] Claude API not available for " + user.name);
+        return user.role.downstream.orders || starting_throughput;
+    }
+    if (isOpenAIModel && !openai) {
+        console.log("[AI Fallback] OpenAI API not available for " + user.name);
         return user.role.downstream.orders || starting_throughput;
     }
     
-    var modelName = user.playerType;
+    // Route to appropriate API
+    if (isClaudeModel) {
+        return await getClaudeDecision(user, group, modelName);
+    } else if (isOpenAIModel) {
+        return await getOpenAIDecision(user, group, modelName);
+    } else {
+        console.log("[AI Fallback] Unknown model type for " + user.name);
+        return user.role.downstream.orders || starting_throughput;
+    }
+}
+
+// Get decision from OpenAI
+async function getOpenAIDecision(user, group, modelName) {
     
     // Build the prompt
     var prompt = buildPrompt(user, group);
@@ -783,6 +817,9 @@ async function getAiOrderDecision(user, group) {
                 console.log("[AI] Invalid response, using fallback. Response was: " + decision);
                 orderQuantity = user.role.downstream.orders || starting_throughput;
             }
+
+            // Cap at reasonable maximum
+            orderQuantity = Math.min(orderQuantity, 100);
             
             return orderQuantity;
             
@@ -821,6 +858,75 @@ async function getAiOrderDecision(user, group) {
     }
     
     // If we somehow exit the loop, use fallback
+    return user.role.downstream.orders || starting_throughput;
+}
+
+// Get decision from Claude
+async function getClaudeDecision(user, group, modelName) {
+    var prompt = buildPrompt(user, group);
+    
+    console.log("[AI] Requesting decision from " + modelName + " for " + user.role.name);
+    
+    // Retry loop for handling 429 errors
+    var retryCount = 0;
+    while (retryCount < maxRetries) {
+        try {
+            var response = await claude.messages.create({
+                model: modelName,
+                max_tokens: 100,
+                messages: [
+                    {
+                        role: "user",
+                        content: "You are a supply chain manager making ordering decisions. " + prompt + "\n\nRespond with ONLY a single integer number (no explanation)."
+                    }
+                ]
+            });
+            
+            var decision = response.content[0].text.trim();
+            console.log("[AI] Raw response from Claude: " + decision);
+            
+            // Try to extract a number from the response
+            var match = decision.match(/\d+/);
+            var orderQuantity = match ? parseInt(match[0]) : NaN;
+            
+            // Validate and constrain the order
+            if (isNaN(orderQuantity) || orderQuantity < 0) {
+                console.log("[AI] Invalid response, using fallback. Response was: " + decision);
+                orderQuantity = user.role.downstream.orders || starting_throughput;
+            }
+            
+            // Cap at reasonable maximum
+            orderQuantity = Math.min(orderQuantity, 100);
+            
+            return orderQuantity;
+            
+        } catch (error) {
+            // Check if this is a rate limit error (429)
+            if (error.status === 429) {
+                retryCount++;
+                
+                // Extract retry-after from headers or use default
+                var retryAfter = 5;
+                if (error.response && error.response.headers && error.response.headers['retry-after']) {
+                    retryAfter = parseInt(error.response.headers['retry-after']);
+                }
+                
+                console.log("[AI] Rate limit hit (429) for " + modelName + ", retry " + retryCount + "/" + maxRetries + " after " + retryAfter + " seconds");
+                
+                if (retryCount < maxRetries) {
+                    await sleep(retryAfter * 1000);
+                    continue;
+                } else {
+                    console.log("[AI] Max retries reached, using fallback");
+                    return user.role.downstream.orders || starting_throughput;
+                }
+            } else {
+                console.error("[AI Error] Failed to get decision for " + user.name + ":", error.message || error);
+                return user.role.downstream.orders || starting_throughput;
+            }
+        }
+    }
+    
     return user.role.downstream.orders || starting_throughput;
 }
 
