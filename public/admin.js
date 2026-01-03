@@ -29,8 +29,6 @@ var gameGroup;
 var chart;
 var aiModels = [];
 
-google.charts.load('current', { packages: ['corechart'] });
-
 // Admin page
 $(document).ready(function () {
     $('#grouppanel').hide();
@@ -297,121 +295,107 @@ function refreshTable(groups, numUsers, gameStarted) {
     $('#status').text('You have not started the game. ' + numParticipants);
 }
 
-// Track which series are visible
-var visibleSeries = {};
-
 // The details of the fancy charts
 function drawChart(group, type) {
-    if (!chart) chart = new google.visualization.LineChart(document.getElementById('groupChart'));
-    var data = new google.visualization.DataTable();
-    data.addColumn('string', 'X');
-
-    var groupToShow = gameGroup[group];
-
-    // Initialize checkboxes if not already done for this group
-    var checkboxKey = group + '_' + type;
-    if (!visibleSeries[checkboxKey]) {
-        visibleSeries[checkboxKey] = {};
-        for (var i = 0; i < gameGroup[group].users.length; i++) {
-            visibleSeries[checkboxKey][i] = true;
-        }
+    var ctx = document.getElementById('groupChart').getContext('2d');
+    
+    if (chart && typeof chart.destroy === 'function') {
+        chart.destroy();
     }
 
-    // Add columns only for visible series
-    for (var i = 0; i < gameGroup[group].users.length; i++) {
-        if (visibleSeries[checkboxKey][i]) {
-            data.addColumn('number', gameGroup[group].users[i].role.name);
-        }
-    }
-
+    var labels = [];
     for (var i = 1; i < gameGroup[group].week; i++) {
-        var dataRow = [i.toString()];
-        for (var j = 0; j < gameGroup[group].users.length; j++) {
-            if (visibleSeries[checkboxKey][j]) {
-                var numToPush = 0;
-                switch (type) {
-                    case "Cost":
-                        numToPush = gameGroup[group].users[j].costHistory[i];
-                        vAxisTitle = "Cost ($)";
-                        break;
-                    case "Inventory":
-                        numToPush = parseInt(gameGroup[group].users[j].inventoryHistory[i]) - parseInt(gameGroup[group].users[j].backlogHistory[i]);
-                        vAxisTitle = "Inventory (units)";
-                        break;
-                    case "Orders":
-                        numToPush = gameGroup[group].users[j].orderHistory[i];
-                        vAxisTitle = "Orders (units)";
-                        break;
-                    default:
-                }
+        labels.push(i);
+    }
 
-                dataRow.push(numToPush);
+    var datasets = [];
+    var vAxisTitle = "";
+    switch (type) {
+        case "Cost": vAxisTitle = "Cost ($)"; break;
+        case "Inventory": vAxisTitle = "Inventory (units)"; break;
+        case "Orders": vAxisTitle = "Orders (units)"; break;
+    }
+
+    var roleColors = [
+        'rgba(54, 162, 235, 1)',   // Blue
+        'rgba(75, 192, 192, 1)',   // Green
+        'rgba(255, 159, 64, 1)',   // Orange
+        'rgba(255, 99, 132, 1)'    // Red
+    ];
+
+    for (var j = 0; j < gameGroup[group].users.length; j++) {
+        var userData = [];
+        for (var i = 1; i < gameGroup[group].week; i++) {
+            var val = 0;
+            switch (type) {
+                case "Cost":
+                    val = gameGroup[group].users[j].costHistory[i];
+                    break;
+                case "Inventory":
+                    val = parseInt(gameGroup[group].users[j].inventoryHistory[i]) - parseInt(gameGroup[group].users[j].backlogHistory[i]);
+                    break;
+                case "Orders":
+                    val = gameGroup[group].users[j].orderHistory[i];
+                    break;
+            }
+            userData.push(val);
+        }
+
+        datasets.push({
+            label: gameGroup[group].users[j].role.name,
+            data: userData,
+            borderColor: roleColors[j % roleColors.length],
+            backgroundColor: roleColors[j % roleColors.length].replace('1)', '0.1)'),
+            borderWidth: 2,
+            fill: false,
+            tension: 0.1
+        });
+    }
+
+    var chartTitle = "Group " + (parseInt(group) + 1) + " - " + type;
+
+    chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: datasets
+        },
+        options: {
+            animation: false,
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: chartTitle,
+                    font: { size: 16 }
+                },
+                legend: {
+                    position: 'bottom',
+                    labels: { 
+                        boxWidth: 12, 
+                        padding: 20,
+                        usePointStyle: true
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Week #'
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: vAxisTitle
+                    },
+                    beginAtZero: type === "Cost" || type === "Orders"
+                }
             }
         }
-        data.addRows([dataRow]);
-    }
-
-    var vAxisTitle = "";
-    var chartTitle = "Group " + parseInt(parseInt(group) + 1);
-    switch (type) {
-        case "Cost":
-            vAxisTitle = "Cost ($)";
-            break;
-        case "Inventory":
-            vAxisTitle = "Inventory (units)";
-            break;
-        case "Orders":
-            vAxisTitle = "Orders (units)";
-            break;
-        default:
-    }
-
-    var options = {
-        hAxis: {
-            title: 'Week #'
-        },
-        vAxis: {
-            title: vAxisTitle
-        },
-        curveType: 'function',
-        legend: { 
-            position: 'bottom',
-            textStyle: { fontSize: 12 }
-        },
-        title: chartTitle,
-        width: 675,
-        height: 250,
-        chartArea: { width: '75%', height: '65%' }
-    };
-
-    chart.draw(data, options);
-    
-    // Update checkboxes
-    updateSeriesCheckboxes(group, type);
-}
-
-// Create checkboxes for toggling series visibility
-function updateSeriesCheckboxes(group, type) {
-    var checkboxKey = group + '_' + type;
-    var container = $('#seriesCheckboxes');
-    container.empty();
-    
-    for (var i = 0; i < gameGroup[group].users.length; i++) {
-        var roleName = gameGroup[group].users[i].role.name;
-        var checked = visibleSeries[checkboxKey][i] ? 'checked' : '';
-        var checkbox = $('<label style="margin-right: 15px; cursor: pointer;">' +
-            '<input type="checkbox" ' + checked + ' data-series="' + i + '" style="margin-right: 5px;"> ' +
-            roleName +
-            '</label>');
-        
-        checkbox.find('input').on('change', function() {
-            var seriesIndex = parseInt($(this).attr('data-series'));
-            visibleSeries[checkboxKey][seriesIndex] = $(this).is(':checked');
-            drawChart(group, type);
-        });
-        
-        container.append(checkbox);
-    }
+    });
 }
 
 // Populate the AI model options in the Add Team modal

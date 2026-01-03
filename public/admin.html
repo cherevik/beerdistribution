@@ -28,7 +28,7 @@
 
   <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
 
-  <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <!-- The admin source -->
   <script src="admin.js"></script>
@@ -100,18 +100,15 @@
             </form>
           </div>
           <div class="col-sm-9">
-            <div style="margin-bottom: 10px;">
-              <strong>Show series:</strong>
-              <div id="seriesCheckboxes" style="margin-top: 5px;"></div>
+            <div style="position: relative; height: 300px; width: 100%;">
+              <canvas id="groupChart"></canvas>
             </div>
-            <div id="groupChart" />
           </div>
         </div>
       </div>
     </div>
-  </div>
 
-  <div class="panel panel-default" id="grouppanel">
+    <div class="panel panel-default" id="grouppanel">
     <div class="panel-heading">Groups</div>
 
     <!-- This is where you update the names of the groups -->
