@@ -297,6 +297,9 @@ function refreshTable(groups, numUsers, gameStarted) {
     $('#status').text('You have not started the game. ' + numParticipants);
 }
 
+// Track which series are visible
+var visibleSeries = {};
+
 // The details of the fancy charts
 function drawChart(group, type) {
     if (!chart) chart = new google.visualization.LineChart(document.getElementById('groupChart'));
@@ -305,31 +308,45 @@ function drawChart(group, type) {
 
     var groupToShow = gameGroup[group];
 
+    // Initialize checkboxes if not already done for this group
+    var checkboxKey = group + '_' + type;
+    if (!visibleSeries[checkboxKey]) {
+        visibleSeries[checkboxKey] = {};
+        for (var i = 0; i < gameGroup[group].users.length; i++) {
+            visibleSeries[checkboxKey][i] = true;
+        }
+    }
+
+    // Add columns only for visible series
     for (var i = 0; i < gameGroup[group].users.length; i++) {
-        data.addColumn('number', gameGroup[group].users[i].role.name);
+        if (visibleSeries[checkboxKey][i]) {
+            data.addColumn('number', gameGroup[group].users[i].role.name);
+        }
     }
 
     for (var i = 1; i < gameGroup[group].week; i++) {
         var dataRow = [i.toString()];
         for (var j = 0; j < gameGroup[group].users.length; j++) {
-            var numToPush = 0;
-            switch (type) {
-                case "Cost":
-                    numToPush = gameGroup[group].users[j].costHistory[i];
-                    vAxisTitle = "Cost ($)";
-                    break;
-                case "Inventory":
-                    numToPush = parseInt(gameGroup[group].users[j].inventoryHistory[i]) - parseInt(gameGroup[group].users[j].backlogHistory[i]);
-                    vAxisTitle = "Inventory (units)";
-                    break;
-                case "Orders":
-                    numToPush = gameGroup[group].users[j].orderHistory[i];
-                    vAxisTitle = "Orders (units)";
-                    break;
-                default:
-            }
+            if (visibleSeries[checkboxKey][j]) {
+                var numToPush = 0;
+                switch (type) {
+                    case "Cost":
+                        numToPush = gameGroup[group].users[j].costHistory[i];
+                        vAxisTitle = "Cost ($)";
+                        break;
+                    case "Inventory":
+                        numToPush = parseInt(gameGroup[group].users[j].inventoryHistory[i]) - parseInt(gameGroup[group].users[j].backlogHistory[i]);
+                        vAxisTitle = "Inventory (units)";
+                        break;
+                    case "Orders":
+                        numToPush = gameGroup[group].users[j].orderHistory[i];
+                        vAxisTitle = "Orders (units)";
+                        break;
+                    default:
+                }
 
-            dataRow.push(numToPush);
+                dataRow.push(numToPush);
+            }
         }
         data.addRows([dataRow]);
     }
@@ -356,16 +373,45 @@ function drawChart(group, type) {
         vAxis: {
             title: vAxisTitle
         },
-        series: {
-            1: { curveType: 'function' }
+        curveType: 'function',
+        legend: { 
+            position: 'bottom',
+            textStyle: { fontSize: 12 }
         },
-        'legend': 'bottom',
-        'title': chartTitle,
-        'width': 675,
-        'height': 250
+        title: chartTitle,
+        width: 675,
+        height: 250,
+        chartArea: { width: '75%', height: '65%' }
     };
 
     chart.draw(data, options);
+    
+    // Update checkboxes
+    updateSeriesCheckboxes(group, type);
+}
+
+// Create checkboxes for toggling series visibility
+function updateSeriesCheckboxes(group, type) {
+    var checkboxKey = group + '_' + type;
+    var container = $('#seriesCheckboxes');
+    container.empty();
+    
+    for (var i = 0; i < gameGroup[group].users.length; i++) {
+        var roleName = gameGroup[group].users[i].role.name;
+        var checked = visibleSeries[checkboxKey][i] ? 'checked' : '';
+        var checkbox = $('<label style="margin-right: 15px; cursor: pointer;">' +
+            '<input type="checkbox" ' + checked + ' data-series="' + i + '" style="margin-right: 5px;"> ' +
+            roleName +
+            '</label>');
+        
+        checkbox.find('input').on('change', function() {
+            var seriesIndex = parseInt($(this).attr('data-series'));
+            visibleSeries[checkboxKey][seriesIndex] = $(this).is(':checked');
+            drawChart(group, type);
+        });
+        
+        container.append(checkbox);
+    }
 }
 
 // Populate the AI model options in the Add Team modal
