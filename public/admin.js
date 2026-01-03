@@ -391,7 +391,7 @@ function drawChart(group, type) {
                         display: true,
                         text: vAxisTitle
                     },
-                    beginAtZero: type === "Cost" || type === "Orders"
+                    beginAtZero: true
                 }
             }
         }
