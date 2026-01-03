@@ -30,7 +30,12 @@ require('dotenv').config();
 var express = require('express');
 var app = express();
 var http = require('http').Server(app);
-var io = require('socket.io')(http);
+var io = require('socket.io')(http, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
 var OpenAI = require('openai');
 
 // Initialize OpenAI client
@@ -226,6 +231,7 @@ io.on('connection', function (socket) {
         
         // Get fresh roles for this team
         var teamRoles = JSON.parse(JSON.stringify(BEER_ROLES));
+        var aiPlayersCount = 0;
         
         for (var i = 0; i < 4; i++) {
             var playerType = playerTypes[i];
@@ -245,6 +251,7 @@ io.on('connection', function (socket) {
                 newGroup.users.push(user);
             } else {
                 // Create AI player slot (playerType is the model name like 'gpt-4o', 'o1', etc.)
+                aiPlayersCount++;
                 var aiName = "AI-" + playerType + "-" + role.name;
                 var user = {
                     "name": aiName,
@@ -260,6 +267,9 @@ io.on('connection', function (socket) {
         }
         
         groups.push(newGroup);
+        
+        // Increment numUsers by the number of AI players created
+        numUsers += aiPlayersCount;
         
         callback({ numUsers: numUsers, groups: groups });
         io.to("admins").emit('update table', { numUsers: numUsers, groups: groups });
@@ -288,7 +298,10 @@ io.on('connection', function (socket) {
             for (var i = 0; i < groups[msg].users.length; i++) {
                 var username = groups[msg].users[i].name;
                 console.log("Deleting: " + username);
-                delete users[username];
+                // Only delete from users object if it's a human player (AI players aren't in users object)
+                if (users[username]) {
+                    delete users[username];
+                }
             }
             groups.splice(msg, 1);
             numUsers -= usersToRemove;
@@ -670,13 +683,11 @@ async function processAiOrders(groupIndex) {
     // If no AI players, nothing to do
     if (aiPlayers.length === 0) return;
     
-    // Process each AI player with delays
-    for (var i = 0; i < aiPlayers.length; i++) {
-        var aiPlayer = aiPlayers[i];
-        
-        // Add staggered delays to avoid overwhelming the API
-        await sleep(aiThinkingDelay + (i * 500));
-        
+    // Add initial thinking delay
+    await sleep(aiThinkingDelay);
+    
+    // Process all AI players in parallel using Promise.all
+    var aiPromises = aiPlayers.map(async function(aiPlayer) {
         try {
             var orderDecision = await getAiOrderDecision(aiPlayer.user, group);
             
@@ -691,8 +702,7 @@ async function processAiOrders(groupIndex) {
                 group.waitingForOrders.splice(idx, 1);
             }
             
-            // Notify clients about the order
-            io.to(groupIndex).emit('update order wait', group.waitingForOrders);
+            return { success: true, player: aiPlayer };
             
         } catch (error) {
             console.error("[AI Error] Failed to get decision for " + aiPlayer.user.name + ":", error);
@@ -705,8 +715,16 @@ async function processAiOrders(groupIndex) {
             if (idx !== -1) {
                 group.waitingForOrders.splice(idx, 1);
             }
+            
+            return { success: false, player: aiPlayer, error: error };
         }
-    }
+    });
+    
+    // Wait for all AI decisions to complete
+    await Promise.all(aiPromises);
+    
+    // Notify clients about updated waiting list
+    io.to(groupIndex).emit('update order wait', group.waitingForOrders);
     
     // After all AI orders are in, check if we can advance
     if (group.waitingForOrders.length == 0) {
@@ -749,14 +767,12 @@ async function getAiOrderDecision(user, group) {
             // Call OpenAI API
             var apiParams = {
                 model: modelName,
-                messages: messages
+                messages: messages,
+                reasoning_effort: 'medium'
             };
             
             var response = await openai.chat.completions.create(apiParams);
-            console.log("[AI] Response received from AI:" + JSON.stringify(response));
-            
             var decision = response.choices[0].message.content.trim();
-            console.log("[AI] Raw response: " + decision);
             
             // Try to extract a number from the response
             var match = decision.match(/\d+/);
@@ -767,9 +783,6 @@ async function getAiOrderDecision(user, group) {
                 console.log("[AI] Invalid response, using fallback. Response was: " + decision);
                 orderQuantity = user.role.downstream.orders || starting_throughput;
             }
-            
-            // Cap at reasonable maximum
-            orderQuantity = Math.min(orderQuantity, 100);
             
             return orderQuantity;
             
@@ -830,7 +843,6 @@ CURRENT STATE (Week ${week}):
 - Incoming shipment from ${role.upstream.name}: ${role.upstream.shipments} units (arrives in 2 weeks)
 - Customer demand from ${role.downstream.name}: ${role.downstream.orders} units
 - Total cost so far: $${user.cost.toFixed(2)}
-
 `;
     
     // Add history if available
@@ -842,7 +854,10 @@ CURRENT STATE (Week ${week}):
         }
     }
     
-    prompt += `\nDECISION REQUIRED:
+    prompt += `
+Think like an experienced supply chain manager. Consider demand trends, lead times, and cost trade-offs when making your decision. Follow the best practices in inventory management. Beware of the bullwhip effect and avoid over-ordering.
+
+DECISION REQUIRED:
 How many units should you order from ${role.upstream.name}?
 
 IMPORTANT NOTES:

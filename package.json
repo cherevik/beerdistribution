@@ -9,8 +9,10 @@
   },
   "author": "Miron Vranjes",
   "license": "MIT",
-  "dependencies": {    "dotenv": "^16.4.5",    "express": "^4.14.0",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.22.1",
     "openai": "^6.15.0",
-    "socket.io": "^1.4.8"
+    "socket.io": "^4.8.3"
   }
 }
