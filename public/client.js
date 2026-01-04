@@ -364,7 +364,7 @@ function nextTurn(users, week, user) {
     $("span.upstreamName").text(curUser.role.upstream.name);
     $("span.downstreamName").text(curUser.role.downstream.name);
 
-    var nextTurnModal = new bootstrap.Modal(document.getElementById('nextTurn'));
+    var nextTurnModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('nextTurn'));
     nextTurnModal.show();
 }
 
