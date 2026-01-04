@@ -753,8 +753,8 @@ async function processAiOrders(groupIndex) {
     // Notify clients about updated waiting list
     io.to(groupIndex).emit('update order wait', group.waitingForOrders);
     
-    // After all AI orders are in, check if we can advance
-    if (group.waitingForOrders.length == 0) {
+    // After all AI orders are in, check if we can advance (only if game hasn't ended)
+    if (group.waitingForOrders.length == 0 && !gameEnded) {
         advanceTurn(groupIndex);
     } else {
         io.to(groupIndex).emit('update order wait', group.waitingForOrders);
