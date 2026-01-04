@@ -192,6 +192,15 @@ socket.on('update group', function (msg) {
     drawChart(selectedGroup, selectedType);
 });
 
+// Fired when the game ends (manually or automatically)
+socket.on('game ended', function (msg) {
+    $('#btnEndGame').hide();
+    gameGroup = msg.groups || gameGroup;
+    if (msg.groups) {
+        rankGroups(msg.numUsers);
+    }
+});
+
 // Changes the UI when the game starts
 function startGame(numUsers) {
     $('#btnStartGame').hide();
@@ -295,9 +304,25 @@ function refreshTable(groups, numUsers, gameStarted) {
     $('#status').text('You have not started the game. ' + numParticipants);
 }
 
+// Track which datasets are hidden by user
+var hiddenDatasets = {};
+
 // The details of the fancy charts
 function drawChart(group, type) {
     var ctx = document.getElementById('groupChart').getContext('2d');
+    
+    var chartKey = group + '_' + type;
+    
+    // Store hidden state from current chart before destroying
+    if (chart && chart.data && chart.data.datasets) {
+        if (!hiddenDatasets[chartKey]) {
+            hiddenDatasets[chartKey] = {};
+        }
+        for (var i = 0; i < chart.data.datasets.length; i++) {
+            var meta = chart.getDatasetMeta(i);
+            hiddenDatasets[chartKey][chart.data.datasets[i].label] = meta.hidden;
+        }
+    }
     
     if (chart && typeof chart.destroy === 'function') {
         chart.destroy();
@@ -341,14 +366,18 @@ function drawChart(group, type) {
             userData.push(val);
         }
 
+        var roleName = gameGroup[group].users[j].role.name;
+        var isHidden = hiddenDatasets[chartKey] && hiddenDatasets[chartKey][roleName] === true;
+        
         datasets.push({
-            label: gameGroup[group].users[j].role.name,
+            label: roleName,
             data: userData,
             borderColor: roleColors[j % roleColors.length],
             backgroundColor: roleColors[j % roleColors.length].replace('1)', '0.1)'),
             borderWidth: 2,
             fill: false,
-            tension: 0.1
+            tension: 0.1,
+            hidden: isHidden
         });
     }
 

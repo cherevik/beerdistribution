@@ -588,7 +588,7 @@ function advanceTurn(group) {
         if (allGroupsComplete && !gameEnded) {
             gameEnded = true;
             console.log("[Game] All groups completed " + MAX_WEEKS + " weeks. Game ended automatically.");
-            io.emit('game ended', { numUsers: numUsers });
+            io.emit('game ended', { numUsers: numUsers, groups: groups });
             io.to("admins").emit('update table', { numUsers: numUsers, groups: groups });
         }
     }
@@ -930,9 +930,8 @@ COST STRUCTURE:
 - Unmet demand (backlog) costs $${backlog_cost} per unit per week
 
 CURRENT STATE (Week ${week}):
-- Current inventory: ${user.inventory} units
+- Current inventory: ${user.inventory} units (includes shipment of ${role.upstream.shipments} units that just arrived)
 - Current backlog: ${user.backlog} units
-- Incoming shipment from ${role.upstream.name}: ${role.upstream.shipments} units (arrives in 2 weeks)
 - Customer demand from ${role.downstream.name}: ${role.downstream.orders} units
 - Total cost so far: $${user.cost.toFixed(2)}
 `;
