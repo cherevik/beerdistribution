@@ -24,8 +24,13 @@
  * THE SOFTWARE.
  * ======================================================================== */
 
-// Load environment variables from .env file
-require('dotenv').config();
+// Load environment variables from .env file (only for local development)
+// Railway and other platforms inject environment variables directly
+try {
+    require('dotenv').config();
+} catch (e) {
+    // dotenv not available or .env file doesn't exist - this is fine for production
+}
 
 var express = require('express');
 var app = express();
