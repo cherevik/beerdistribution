@@ -32,7 +32,8 @@ var aiModels = [];
 // Admin page
 $(document).ready(function () {
     $('#grouppanel').hide();
-    $('#myModal').modal('show');
+    var myModal = new bootstrap.Modal(document.getElementById('myModal'));
+    myModal.show();
     $('#btnResetGame').hide();
     $('#btnEndGame').hide();
     $('#btnAddTeam').hide();
@@ -45,7 +46,7 @@ $(document).ready(function () {
             if (msg == "Invalid Password") {
                 $('#wrongPassword').show();
             } else {
-                $('#myModal').modal('hide');
+                bootstrap.Modal.getInstance(document.getElementById('myModal')).hide();
                 $('#groupRank').text("Group #");
                 gameGroup = msg.groups;
                 aiModels = msg.aiModels || [];
@@ -106,7 +107,8 @@ $(document).ready(function () {
     // Add Team button - show modal
     $("#btnAddTeam").click(function () {
         $('#addTeamError').hide();
-        $('#addTeamModal').modal('show');
+        var addTeamModal = new bootstrap.Modal(document.getElementById('addTeamModal'));
+        addTeamModal.show();
     });
 
     // Create Team button in modal
@@ -127,7 +129,7 @@ $(document).ready(function () {
             } else {
                 gameGroup = msg.groups;
                 refreshTable(gameGroup, msg.numUsers, false);
-                $('#addTeamModal').modal('hide');
+                bootstrap.Modal.getInstance(document.getElementById('addTeamModal')).hide();
             }
         });
     });
@@ -286,8 +288,11 @@ function refreshTable(groups, numUsers, gameStarted) {
             $('#group' + i).append(userCell);
         }
 
+        // Always add the last column, but only show button when game hasn't started
         if (!gameStarted) {
-            $('#group' + i).append('<td><button type="button" class="btn btn-danger btn-xs btnRemoveGroup" group="' + i + '"><span class="glyphicon glyphicon-remove" aria-hidden="true"></span></button></td>');
+            $('#group' + i).append('<td><button type="button" class="btn btn-danger btn-sm btnRemoveGroup" group="' + i + '"><i class="bi bi-x-circle"></i></button></td>');
+        } else {
+            $('#group' + i).append('<td></td>');
         }
 
         if (userDisconnected) $('#group' + i).addClass("danger");

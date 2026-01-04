@@ -46,7 +46,8 @@ var countOptions = {
 // Login
 $(document).ready(function () {
     $('#board').hide();
-    $('#myModal').modal('show');
+    var myModal = new bootstrap.Modal(document.getElementById('myModal'));
+    myModal.show();
 
     // Dialog for logging in
     $("#btnLogin").click(function (event) {
@@ -71,7 +72,7 @@ $(document).ready(function () {
 
                 $('#formUsername').val('');
                 $('#errorDialog').hide();
-                $('#myModal').modal('hide');
+                bootstrap.Modal.getInstance(document.getElementById('myModal')).hide();
                 $('#role').text('Your Role: ' + curUser.role.name);
                 $('#username').text('Signed in as ' + curUser.name);
 
@@ -184,7 +185,7 @@ $(document).ready(function () {
     });
 
     // Go to the next turn
-    $('#nextTurn').on('hidden.bs.modal', function (e) {
+    document.getElementById('nextTurn').addEventListener('hidden.bs.modal', function (e) {
         if (curWeek != 0 && !gameEnded) {
             $('#formOrderAmount').val('');
 
@@ -231,7 +232,8 @@ socket.on('kicked out', function (msg) {
 
     hideGameBoard();
 
-    $('#myModal').modal('show');
+    var myModal = new bootstrap.Modal(document.getElementById('myModal'));
+    myModal.show();
 });
 
 // Someone joined your specific group
@@ -362,13 +364,17 @@ function nextTurn(users, week, user) {
     $("span.upstreamName").text(curUser.role.upstream.name);
     $("span.downstreamName").text(curUser.role.downstream.name);
 
-    $('#nextTurn').modal('show');
+    var nextTurnModal = new bootstrap.Modal(document.getElementById('nextTurn'));
+    nextTurnModal.show();
 }
 
 // The game board disappears when the game is over
 function hideGameBoard() {
     $('#board').hide();
-    $('#nextTurn').modal('hide');
+    var nextTurnModal = bootstrap.Modal.getInstance(document.getElementById('nextTurn'));
+    if (nextTurnModal) {
+        nextTurnModal.hide();
+    }
 
     $('#waitingOnUsers').hide();
     $('#acceptDelivery').hide();
