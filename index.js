@@ -45,6 +45,12 @@ var OpenAI = require('openai');
 var Anthropic = require('@anthropic-ai/sdk');
 var { GoogleGenerativeAI } = require('@google/generative-ai');
 
+// Admin password from environment variable (defaults to 'admin' for development)
+var ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
+if (!process.env.ADMIN_PASSWORD) {
+    console.log('Warning: ADMIN_PASSWORD not set in environment. Using default password "admin".');
+}
+
 // Initialize OpenAI client
 var openai = null;
 if (process.env.OPENAI_API_KEY) {
@@ -224,8 +230,8 @@ io.on('connection', function (socket) {
 
     // This is called by the admin system
     socket.on('submit password', function (msg, callback) {
-        // Not very secure :P
-        if (msg == "admin") {
+        // Check against environment variable password
+        if (msg == ADMIN_PASSWORD) {
             socket.join("admins");
 
             var gameStatus = "";
