@@ -150,6 +150,11 @@ $(document).ready(function () {
         });
     });
 
+    // Download Results button
+    $("#btnDownloadResults").click(function () {
+        window.location.href = '/download-results';
+    });
+
     // Removing a group (in case there are not enough players to start)
     $(document).on('click', '.btnRemoveGroup', function () {
         socket.emit('remove group', $(this).attr("group"), function (msg) {

@@ -45,6 +45,7 @@ var io = require('socket.io')(http, {
 var OpenAI = require('openai');
 var Anthropic = require('@anthropic-ai/sdk');
 var { GoogleGenerativeAI } = require('@google/generative-ai');
+var ExcelJS = require('exceljs');
 
 // Admin password from environment variable (defaults to 'admin' for development)
 var ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
@@ -170,6 +171,16 @@ var BEER_ROLES = [ROLE_0, ROLE_1, ROLE_2, ROLE_3];
 
 // Everything in public is served up
 app.use(express.static(__dirname + '/public'));
+
+// Download results as Excel
+app.get('/download-results', function(req, res) {
+    try {
+        generateExcelReport(res);
+    } catch (error) {
+        console.error('Error generating Excel report:', error);
+        res.status(500).send('Error generating report');
+    }
+});
 
 // Users has established a connection
 io.on('connection', function (socket) {
@@ -970,4 +981,178 @@ Respond with ONLY the number of units to order (e.g., "8" or "12").`;
 // Sleep utility function
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Generate Excel report with game results
+async function generateExcelReport(res) {
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Beer Distribution Game';
+    workbook.created = new Date();
+    
+    // Sheet 1: Summary
+    const summarySheet = workbook.addWorksheet('Summary');
+    summarySheet.columns = [
+        { header: 'Team #', key: 'team', width: 10 },
+        { header: 'Total Cost', key: 'totalCost', width: 15 },
+        { header: 'Retailer', key: 'retailer', width: 20 },
+        { header: 'Wholesaler', key: 'wholesaler', width: 20 },
+        { header: 'Warehouse', key: 'warehouse', width: 20 },
+        { header: 'Factory', key: 'factory', width: 20 }
+    ];
+    
+    groups.forEach((group, index) => {
+        summarySheet.addRow({
+            team: index + 1,
+            totalCost: group.cost.toFixed(2),
+            retailer: `${group.users[0].name} (${group.users[0].playerType}) - $${group.users[0].cost.toFixed(2)}`,
+            wholesaler: `${group.users[1].name} (${group.users[1].playerType}) - $${group.users[1].cost.toFixed(2)}`,
+            warehouse: `${group.users[2].name} (${group.users[2].playerType}) - $${group.users[2].cost.toFixed(2)}`,
+            factory: `${group.users[3].name} (${group.users[3].playerType}) - $${group.users[3].cost.toFixed(2)}`
+        });
+    });
+    
+    // Style the header
+    summarySheet.getRow(1).font = { bold: true };
+    summarySheet.getRow(1).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E0E0' }
+    };
+    
+    // Sheet 2: Team Performance
+    const teamPerfSheet = workbook.addWorksheet('Team Performance');
+    teamPerfSheet.columns = [
+        { header: 'Team', key: 'team', width: 10 },
+        { header: 'Week', key: 'week', width: 10 },
+        { header: 'Total Cost', key: 'totalCost', width: 15 },
+        { header: 'Retailer Cost', key: 'retailerCost', width: 15 },
+        { header: 'Wholesaler Cost', key: 'wholesalerCost', width: 15 },
+        { header: 'Warehouse Cost', key: 'warehouseCost', width: 15 },
+        { header: 'Factory Cost', key: 'factoryCost', width: 15 }
+    ];
+    
+    groups.forEach((group, teamIndex) => {
+        if (group.costHistory) {
+            group.costHistory.forEach((cost, week) => {
+                teamPerfSheet.addRow({
+                    team: teamIndex + 1,
+                    week: week,
+                    totalCost: cost.toFixed(2),
+                    retailerCost: group.users[0].costHistory[week]?.toFixed(2) || '0.00',
+                    wholesalerCost: group.users[1].costHistory[week]?.toFixed(2) || '0.00',
+                    warehouseCost: group.users[2].costHistory[week]?.toFixed(2) || '0.00',
+                    factoryCost: group.users[3].costHistory[week]?.toFixed(2) || '0.00'
+                });
+            });
+        }
+    });
+    
+    teamPerfSheet.getRow(1).font = { bold: true };
+    teamPerfSheet.getRow(1).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E0E0' }
+    };
+    
+    // Sheet 3: Detailed Metrics
+    const detailedSheet = workbook.addWorksheet('Detailed Metrics');
+    detailedSheet.columns = [
+        { header: 'Team', key: 'team', width: 10 },
+        { header: 'Week', key: 'week', width: 10 },
+        { header: 'Role', key: 'role', width: 20 },
+        { header: 'Player Name', key: 'playerName', width: 25 },
+        { header: 'Player Type', key: 'playerType', width: 15 },
+        { header: 'Inventory', key: 'inventory', width: 12 },
+        { header: 'Backlog', key: 'backlog', width: 12 },
+        { header: 'Order Placed', key: 'orderPlaced', width: 15 },
+        { header: 'Weekly Cost', key: 'weeklyCost', width: 15 },
+        { header: 'Cumulative Cost', key: 'cumulativeCost', width: 15 }
+    ];
+    
+    groups.forEach((group, teamIndex) => {
+        group.users.forEach((user) => {
+            if (user.inventoryHistory) {
+                user.inventoryHistory.forEach((inventory, week) => {
+                    detailedSheet.addRow({
+                        team: teamIndex + 1,
+                        week: week,
+                        role: user.role.name,
+                        playerName: user.name,
+                        playerType: user.playerType,
+                        inventory: inventory,
+                        backlog: user.backlogHistory[week] || 0,
+                        orderPlaced: user.orderHistory[week] || 0,
+                        weeklyCost: week > 0 ? (user.costHistory[week] - user.costHistory[week - 1]).toFixed(2) : '0.00',
+                        cumulativeCost: user.costHistory[week]?.toFixed(2) || '0.00'
+                    });
+                });
+            }
+        });
+    });
+    
+    detailedSheet.getRow(1).font = { bold: true };
+    detailedSheet.getRow(1).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E0E0' }
+    };
+    
+    // Sheet 4: Final Standings
+    const standingsSheet = workbook.addWorksheet('Final Standings');
+    standingsSheet.columns = [
+        { header: 'Rank', key: 'rank', width: 10 },
+        { header: 'Team #', key: 'team', width: 10 },
+        { header: 'Total Cost', key: 'totalCost', width: 15 },
+        { header: 'Retailer Cost', key: 'retailerCost', width: 15 },
+        { header: 'Wholesaler Cost', key: 'wholesalerCost', width: 15 },
+        { header: 'Warehouse Cost', key: 'warehouseCost', width: 15 },
+        { header: 'Factory Cost', key: 'factoryCost', width: 15 },
+        { header: 'Status', key: 'status', width: 15 }
+    ];
+    
+    // Sort teams by total cost (lower is better)
+    const sortedTeams = groups.map((group, index) => ({ group, index }))
+        .sort((a, b) => a.group.cost - b.group.cost);
+    
+    sortedTeams.forEach((item, rank) => {
+        const row = standingsSheet.addRow({
+            rank: rank + 1,
+            team: item.index + 1,
+            totalCost: item.group.cost.toFixed(2),
+            retailerCost: item.group.users[0].cost.toFixed(2),
+            wholesalerCost: item.group.users[1].cost.toFixed(2),
+            warehouseCost: item.group.users[2].cost.toFixed(2),
+            factoryCost: item.group.users[3].cost.toFixed(2),
+            status: rank === 0 ? '🏆 WINNER' : ''
+        });
+        
+        // Highlight winner row
+        if (rank === 0) {
+            row.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFFFD700' }
+            };
+            row.font = { bold: true };
+        }
+    });
+    
+    standingsSheet.getRow(1).font = { bold: true };
+    standingsSheet.getRow(1).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E0E0' }
+    };
+    
+    // Generate filename with timestamp
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const filename = `Beer_Game_Results_${timestamp}.xlsx`;
+    
+    // Set response headers
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    // Write to response
+    await workbook.xlsx.write(res);
+    res.end();
 }
