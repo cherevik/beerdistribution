@@ -99,14 +99,14 @@ var aiThinkingDelay = 1500; // Simulate thinking time
 var maxRetries = 3; // Maximum retry attempts for 429 errors
 
 var inventory_cost = 0.5;
-var backlog_cost = 1;
-var starting_inventory = 12;
+var backlog_cost = 1.0;
+var starting_inventory = 8;
 var starting_throughput = 4;
-var customer_demand = [4, 8, 12, 16, 20];
+var customer_demand = [4, 8];
 
 // Maximum number of weeks to demonstrate the bullwhip effect
-// 40 weeks captures: initial stability (8 weeks), demand changes (weeks 8-39), and adaptation
-var MAX_WEEKS = 40;
+// 20 weeks with single demand shock at week 4 provides clear demonstration
+var MAX_WEEKS = 25;
 
 // This controls how the roles are labeled
 var BEER_NAMES = ["Retailer", "Wholesaler", "Regional Warehouse", "Factory"];
@@ -513,16 +513,10 @@ function advanceTurn(group) {
 
         // If start, get order from customer directly
         if (i == 0) {
-            if (groupToAdvance.week < 8) {
+            if (groupToAdvance.week < 4) {
                 curUser.role.downstream.orders = customer_demand[0];
-            } else if (groupToAdvance.week < 19) {
-                curUser.role.downstream.orders = customer_demand[1];
-            } else if (groupToAdvance.week < 26) {
-                curUser.role.downstream.orders = customer_demand[2];
-            } else if (groupToAdvance.week < 39) {
-                curUser.role.downstream.orders = customer_demand[3];
             } else {
-                curUser.role.downstream.orders = customer_demand[4];
+                curUser.role.downstream.orders = customer_demand[1];
             }
             console.log("[" + curUser.role.name + "] " + " Customer Order >>>: " + curUser.role.downstream.orders);
         } else {
